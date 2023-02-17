@@ -16,17 +16,20 @@ public class Plugin : BaseUnityPlugin
 
     private ConfigEntry<float> _acceleration;
     private ConfigEntry<float> _maxSpeed;
+    private ConfigEntry<int> _breadth;
 
     public Plugin()
     {
         _acceleration = Config.Bind<float>("Main", "Acceleration", 1.5f);
         _maxSpeed = Config.Bind<float>("Main", "Max Speed", 14f);
+        _breadth = Config.Bind<int>("Main", "Harvester Breadth", 4);
     }
 
     private void Awake()
     {
-        VehiclePatch.MaxSpeed = _maxSpeed.Value;
-        VehiclePatch.Acceleration = _acceleration.Value;
+        ModSettings.MaxSpeed = _maxSpeed.Value;
+        ModSettings.Acceleration = _acceleration.Value;
+        ModSettings.Breadth = _breadth.Value;
 
         _harmony = Harmony.CreateAndPatchAll(typeof(VehiclePatch), "fururikawa.FastAndFuriosa");
 
@@ -43,29 +46,27 @@ public class Plugin : BaseUnityPlugin
 [HarmonyPatch]
 public static class VehiclePatch
 {
-    public static float MaxSpeed = 14f;
-    public static float Acceleration = 1.5f;
-
     [HarmonyPatch(typeof(Tractor), "OnStartClient")]
     [HarmonyPostfix]
     public static void OnStartClientPatch(Tractor __instance)
     {
         ControlVehicle vehicleControls = __instance.control;
 
-        vehicleControls.acceleration = Acceleration;
-        vehicleControls.maxSpeed = MaxSpeed;
+        vehicleControls.acceleration = ModSettings.Acceleration;
+        vehicleControls.maxSpeed = ModSettings.MaxSpeed;
         vehicleControls.turnSpeed = 195f;
         vehicleControls.turningReversedWhenBackwards = true;
 
         var spots = new List<Transform>();
         Transform original = __instance.harvestableSpot[0];
         Transform parent = original.GetParent();
-        float breadth = 1.5f;
+
+        float breadth = (ModSettings.Breadth - 1) / 2f;
 
         for (float i = -breadth; i <= breadth; i++)
         {
             var obj = GameObject.Instantiate(original);
-            obj.name = $"HarvestHere ({i + 4})";
+            obj.name = $"HarvestHere ({Mathf.RoundToInt(i + breadth)})";
             obj.transform.SetParent(parent, false);
             obj.localPosition = new Vector3(i * 2, 0, 0);
             spots.Add(obj);
@@ -79,20 +80,24 @@ public static class VehiclePatch
         __instance.harvestableSpot = spots.ToArray();
     }
 
-    [HarmonyPatch(typeof(Vehicle), "LateUpdate")]
-    [HarmonyPrefix]
-    public static bool LateUpdate(Vehicle __instance)
+    [HarmonyPatch(typeof(Vehicle), "OnEnable")]
+    [HarmonyPostfix]
+    public static void OnEnablePatch(Vehicle __instance)
     {
-        if (!hasAuthority(__instance))
+        if (__instance.saveId == 6) // Helicopter
         {
-            ControlVehicle control = __instance.GetComponent<ControlVehicle>();
-            FieldInfo folVelocity = typeof(Vehicle).GetField("folVelocity", BindingFlags.NonPublic | BindingFlags.Instance);
-            Vector3 velocity = (Vector3)folVelocity.GetValue(__instance);
-            __instance.myHitBox.position = Vector3.SmoothDamp(__instance.myHitBox.position, __instance.hitBoxFollow.position, ref velocity, 0.05f);
-            __instance.myHitBox.rotation = Quaternion.Lerp(__instance.myHitBox.rotation, __instance.hitBoxFollow.rotation, control.turnSpeed / 100f);
+            var control = __instance.GetComponent<ControlVehicle>();
+            control.maxSpeed = 20;
+            control.turningReversedWhenBackwards = true;
         }
-
-        return false;
+        else if (__instance.saveId == 2) // Motorbike
+        {
+            var control = __instance.GetComponent<ControlVehicle>();
+            control.maxSpeed = 23;
+            control.acceleration = 1.5f;
+            control.reverseSpeedClamp0to1 = -0.45f;
+            control.turningReversedWhenBackwards = true;
+        }
     }
 
     [HarmonyPatch(typeof(NetworkBehaviour), "hasAuthority", MethodType.Getter)]
